@@ -245,7 +245,9 @@ mod tests {
     use actix_web::{
         dev::Service,
         error::{self, ErrorForbidden},
+        http::header::WWW_AUTHENTICATE,
         http::StatusCode,
+        http::Version,
         test::TestRequest,
         web, App, HttpResponse,
     };
@@ -386,6 +388,69 @@ mod tests {
 
         let resp = srv.call(req).await.unwrap();
         assert_eq!(resp.status(), StatusCode::UNAUTHORIZED);
+    }
+
+    #[actix_web::test]
+    async fn test_middleware_works_with_http10_client() {
+        async fn validator(
+            req: ServiceRequest,
+            _credentials: BasicAuth,
+        ) -> Result<ServiceRequest, (actix_web::Error, ServiceRequest)> {
+            Err((ErrorForbidden("You are not welcome!"), req))
+        }
+        let middleware = HttpAuthentication::basic(validator);
+
+        let srv = actix_web::test::init_service(
+            App::new()
+                .wrap(middleware)
+                .route("/", web::get().to(HttpResponse::Ok)),
+        )
+        .await;
+
+        // we need to test both with and without Authorization and get for both a realm value
+        let req = actix_web::test::TestRequest::with_uri("/")
+            .version(Version::HTTP_10)
+            .to_request();
+
+        let resp = srv.call(req).await.unwrap();
+        assert_eq!(resp.status(), StatusCode::UNAUTHORIZED);
+        assert!(resp
+            .headers()
+            .get(WWW_AUTHENTICATE)
+            .unwrap()
+            .to_str()
+            .unwrap()
+            .ends_with("realm=\"restricted\""));
+
+        let req = actix_web::test::TestRequest::with_uri("/")
+            .version(Version::HTTP_10)
+            .append_header(("Authorization", "Basic DontCare"))
+            .to_request();
+
+        let resp = srv.call(req).await.unwrap();
+        assert_eq!(resp.status(), StatusCode::UNAUTHORIZED);
+        assert!(resp
+            .headers()
+            .get(WWW_AUTHENTICATE)
+            .unwrap()
+            .to_str()
+            .unwrap()
+            .ends_with("realm=\"restricted\""));
+
+        // HTTP 1.1 still doesn't include a realm if none is provided
+        let req = actix_web::test::TestRequest::with_uri("/")
+            .version(Version::HTTP_11)
+            .to_request();
+
+        let resp = srv.call(req).await.unwrap();
+        assert_eq!(resp.status(), StatusCode::UNAUTHORIZED);
+        assert!(!resp
+            .headers()
+            .get(WWW_AUTHENTICATE)
+            .unwrap()
+            .to_str()
+            .unwrap()
+            .ends_with("realm=\"restricted\""));
     }
 
     #[actix_web::test]

@@ -3,7 +3,7 @@
 use std::borrow::Cow;
 
 use actix_utils::future::{ready, Ready};
-use actix_web::{dev::Payload, http::header::Header, FromRequest, HttpRequest};
+use actix_web::{dev::Payload, http::header::Header, http::Version, FromRequest, HttpRequest};
 
 use super::{config::AuthExtractorConfig, errors::AuthenticationError};
 use crate::headers::{
@@ -100,10 +100,17 @@ impl FromRequest for BasicAuth {
                 .map_err(|err| {
                     log::debug!("`BasicAuth` extract error: {}", err);
 
-                    let challenge = req
+                    let mut challenge = req
                         .app_data::<Config>()
                         .map(|config| config.0.clone())
                         .unwrap_or_default();
+
+                    // realm was made optional with http 1.1: https://datatracker.ietf.org/doc/html/rfc7235#appendix-A
+                    // it is still required for http 1.0, so if a client uses Version::HTTP_10, we need to make sure
+                    // realm is not none
+                    if req.version() == Version::HTTP_10 && challenge.realm.is_none() {
+                        challenge.realm = Some("restricted".into());
+                    }
 
                     AuthenticationError::new(challenge)
                 }),
