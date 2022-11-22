@@ -5,9 +5,9 @@ use crate::status::Status;
 /// Failure modes of the rate limiter.
 #[derive(Debug, Display, Error, From)]
 pub enum Error {
-    /// Redis client failed to connect or run a query.
-    #[display(fmt = "Redis client failed to connect or run a query")]
-    Client(redis::RedisError),
+    /// Failed to Track connection.
+    #[display(fmt = "Failed to Track connection")]
+    Track(#[error(not(source))] String),
 
     /// Limit is exceeded for a key.
     #[display(fmt = "Limit is exceeded for a key")]
@@ -30,7 +30,6 @@ mod tests {
 
     static_assertions::assert_impl_all! {
         Error:
-        From<redis::RedisError>,
         From<time::error::ComponentRange>,
     }
 

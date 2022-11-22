@@ -43,7 +43,7 @@ impl Status {
         self.reset_epoch_utc
     }
 
-    pub(crate) fn epoch_utc_plus(duration: Duration) -> Result<usize, LimitationError> {
+    pub fn epoch_utc_plus(duration: Duration) -> Result<usize, LimitationError> {
         match chrono::Duration::from_std(duration) {
             Ok(value) => Ok(chrono::Utc::now()
                 .add(value)
