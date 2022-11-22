@@ -3,14 +3,13 @@ use std::{borrow::Cow, sync::Arc, time::Duration};
 #[cfg(feature = "session")]
 use actix_session::SessionExt as _;
 use actix_web::dev::ServiceRequest;
-use redis::Client;
 
-use crate::{errors::Error, GetArcBoxKeyFn, Limiter};
+use crate::{errors::Error, DataSource, GetArcBoxKeyFn, Limiter};
 
 /// Rate limiter builder.
 #[derive(Debug)]
-pub struct Builder {
-    pub(crate) redis_url: String,
+pub struct Builder<T: DataSource> {
+    pub(crate) client: T,
     pub(crate) limit: usize,
     pub(crate) period: Duration,
     pub(crate) get_key_fn: Option<GetArcBoxKeyFn>,
@@ -19,15 +18,15 @@ pub struct Builder {
     pub(crate) session_key: Cow<'static, str>,
 }
 
-impl Builder {
+impl<T: DataSource> Builder<T> {
     /// Set upper limit.
-    pub fn limit(&mut self, limit: usize) -> &mut Self {
+    pub fn limit(mut self, limit: usize) -> Self {
         self.limit = limit;
         self
     }
 
     /// Set limit window/period.
-    pub fn period(&mut self, period: Duration) -> &mut Self {
+    pub fn period(mut self, period: Duration) -> Self {
         self.period = period;
         self
     }
@@ -35,7 +34,7 @@ impl Builder {
     /// Sets rate limit key derivation function.
     ///
     /// Should not be used in combination with `cookie_name` or `session_key` as they conflict.
-    pub fn key_by<F>(&mut self, resolver: F) -> &mut Self
+    pub fn key_by<F>(mut self, resolver: F) -> Self
     where
         F: Fn(&ServiceRequest) -> Option<String> + Send + Sync + 'static,
     {
@@ -47,7 +46,7 @@ impl Builder {
     ///
     /// This method should not be used in combination of `key_by` as they conflict.
     #[deprecated = "Prefer `key_by`."]
-    pub fn cookie_name(&mut self, cookie_name: impl Into<Cow<'static, str>>) -> &mut Self {
+    pub fn cookie_name(mut self, cookie_name: impl Into<Cow<'static, str>>) -> Self {
         if self.get_key_fn.is_some() {
             panic!("This method should not be used in combination of get_key as they overwrite each other")
         }
@@ -60,7 +59,7 @@ impl Builder {
     /// This method should not be used in combination of `key_by` as they conflict.
     #[deprecated = "Prefer `key_by`."]
     #[cfg(feature = "session")]
-    pub fn session_key(&mut self, session_key: impl Into<Cow<'static, str>>) -> &mut Self {
+    pub fn session_key(mut self, session_key: impl Into<Cow<'static, str>>) -> Self {
         if self.get_key_fn.is_some() {
             panic!("This method should not be used in combination of get_key as they overwrite each other")
         }
@@ -72,7 +71,7 @@ impl Builder {
     ///
     /// Note that this method will connect to the Redis server to test its connection which is a
     /// **synchronous** operation.
-    pub fn build(&mut self) -> Result<Limiter, Error> {
+    pub fn build(self) -> Result<Limiter<T>, Error> {
         let get_key = if let Some(resolver) = self.get_key_fn.clone() {
             resolver
         } else {
@@ -97,7 +96,7 @@ impl Builder {
         };
 
         Ok(Limiter {
-            client: Client::open(self.redis_url.as_str())?,
+            client: self.client,
             limit: self.limit,
             period: self.period,
             get_key_fn: get_key,

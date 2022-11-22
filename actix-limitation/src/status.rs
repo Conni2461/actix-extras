@@ -43,7 +43,7 @@ impl Status {
         self.reset_epoch_utc
     }
 
-    pub(crate) fn epoch_utc_plus(
+    pub fn epoch_utc_plus(
         now: OffsetDateTime,
         duration: Duration,
     ) -> Result<usize, LimitationError> {

@@ -17,18 +17,21 @@ rust-version.workspace = true
 all-features = true
 
 [features]
-default = ["session"]
+default = ["session", "redis-limiter"]
 session = ["actix-session"]
-redis-native-tls = ["redis/tokio-native-tls-comp"]
-redis-rustls = ["redis/tokio-rustls-comp"]
+redis-limiter = ["redis"]
+redis-native-tls = ["redis-limiter", "redis/tokio-native-tls-comp"]
+redis-rustls = ["redis-limiter", "redis/tokio-rustls-comp"]
 
 [dependencies]
 actix-web = { version = "4", default-features = false, features = ["cookies"] }
 
 derive_more = { version = "2", features = ["display", "error", "from"] }
 log = "0.4"
-redis = { version = "1", default-features = false, features = ["tokio-comp"] }
 time = "0.3"
+
+# redis
+redis = { version = "1", default-features = false, features = ["tokio-comp"], optional = true }
 
 # session
 actix-session = { version = "0.12", optional = true }
