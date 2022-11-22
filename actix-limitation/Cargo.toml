@@ -18,8 +18,9 @@ rustdoc-args = ["--cfg", "docsrs"]
 all-features = true
 
 [features]
-default = ["session"]
+default = ["session", "redis-limiter"]
 session = ["actix-session"]
+redis-limiter = ["redis"]
 
 [dependencies]
 actix-utils = "3"
@@ -28,8 +29,11 @@ actix-web = { version = "4", default-features = false, features = ["cookies"] }
 chrono = "0.4"
 derive_more = { version = "1", features = ["display", "error", "from"] }
 log = "0.4"
-redis = { version = "0.26", default-features = false, features = ["tokio-comp"] }
 time = "0.3"
+async-trait = "0.1"
+
+# redis
+redis = { version = "0.26", default-features = false, features = ["tokio-comp"], optional = true }
 
 # session
 actix-session = { version = "0.10", optional = true }

@@ -53,7 +53,6 @@
 use std::{borrow::Cow, fmt, sync::Arc, time::Duration};
 
 use actix_web::dev::ServiceRequest;
-use redis::Client;
 
 mod builder;
 mod errors;
@@ -93,24 +92,26 @@ impl fmt::Debug for GetKeyFn {
 /// Wrapped Get key function Trait
 type GetArcBoxKeyFn = Arc<GetKeyFn>;
 
+#[async_trait::async_trait(?Send)]
+pub trait DataSource {
+    async fn track(&self, key: &str, expires: u64) -> Result<(usize, usize), Error>;
+}
+
 /// Rate limiter.
 #[derive(Debug, Clone)]
-pub struct Limiter {
-    client: Client,
+pub struct Limiter<T: DataSource> {
+    client: T,
     limit: usize,
     period: Duration,
     get_key_fn: GetArcBoxKeyFn,
 }
 
-impl Limiter {
+impl<T: DataSource> Limiter<T> {
     /// Construct rate limiter builder with defaults.
-    ///
-    /// See [`redis-rs` docs](https://docs.rs/redis/0.21/redis/#connection-parameters) on connection
-    /// parameters for how to set the Redis URL.
     #[must_use]
-    pub fn builder(redis_url: impl Into<String>) -> Builder {
+    pub fn builder(client: T) -> Builder<T> {
         Builder {
-            redis_url: redis_url.into(),
+            client,
             limit: DEFAULT_REQUEST_LIMIT,
             period: Duration::from_secs(DEFAULT_PERIOD_SECS),
             get_key_fn: None,
@@ -122,7 +123,10 @@ impl Limiter {
 
     /// Consumes one rate limit unit, returning the status.
     pub async fn count(&self, key: impl Into<String>) -> Result<Status, Error> {
-        let (count, reset) = self.track(key).await?;
+        let (count, reset) = self
+            .client
+            .track(&key.into(), self.period.as_secs())
+            .await?;
         let status = Status::new(count, self.limit, reset);
 
         if count > self.limit {
@@ -131,13 +135,32 @@ impl Limiter {
             Ok(status)
         }
     }
+}
 
-    /// Tracks the given key in a period and returns the count and TTL for the key in seconds.
-    async fn track(&self, key: impl Into<String>) -> Result<(usize, usize), Error> {
-        let key = key.into();
-        let expires = self.period.as_secs();
+#[cfg(feature = "redis-limiter")]
+#[derive(Debug)]
+pub struct RedisDatasource {
+    client: redis::Client,
+}
 
-        let mut connection = self.client.get_multiplexed_tokio_connection().await?;
+#[cfg(feature = "redis-limiter")]
+impl RedisDatasource {
+    pub fn new(redis_url: &str) -> Result<Self, redis::RedisError> {
+        Ok(Self {
+            client: redis::Client::open(redis_url)?,
+        })
+    }
+}
+
+#[cfg(feature = "redis-limiter")]
+#[async_trait::async_trait(?Send)]
+impl DataSource for RedisDatasource {
+    async fn track(&self, key: &str, expires: u64) -> Result<(usize, usize), Error> {
+        let mut connection = self
+            .client
+            .get_multiplexed_tokio_connection()
+            .await
+            .map_err(|e| Error::Track(e.to_string()))?;
 
         // The seed of this approach is outlined Atul R in a blog post about rate limiting using
         // NodeJS and Redis. For more details, see https://blog.atulr.com/rate-limiter
@@ -155,8 +178,12 @@ impl Limiter {
             .cmd("TTL") // Return time-to-live of key
             .arg(&key);
 
-        let (count, ttl) = pipe.query_async(&mut connection).await?;
-        let reset = Status::epoch_utc_plus(Duration::from_secs(ttl))?;
+        let (count, ttl) = pipe
+            .query_async(&mut connection)
+            .await
+            .map_err(|e| Error::Track(e.to_string()))?;
+        let reset = Status::epoch_utc_plus(Duration::from_secs(ttl))
+            .map_err(|e| Error::Track(e.to_string()))?;
 
         Ok((count, reset))
     }
