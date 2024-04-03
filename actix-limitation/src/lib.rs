@@ -50,7 +50,7 @@
 #![doc(html_favicon_url = "https://actix.rs/favicon.ico")]
 #![cfg_attr(docsrs, feature(doc_auto_cfg))]
 
-use std::{borrow::Cow, fmt, sync::Arc, time::Duration};
+use std::{borrow::Cow, fmt, future::Future, sync::Arc, time::Duration};
 
 use actix_web::dev::ServiceRequest;
 
@@ -92,9 +92,12 @@ impl fmt::Debug for GetKeyFn {
 /// Wrapped Get key function Trait
 type GetArcBoxKeyFn = Arc<GetKeyFn>;
 
-#[async_trait::async_trait(?Send)]
 pub trait DataSource {
-    async fn track(&self, key: &str, expires: u64) -> Result<(usize, usize), Error>;
+    fn track(
+        &self,
+        key: &str,
+        expires: u64,
+    ) -> impl Future<Output = Result<(usize, usize), Error>> + Send;
 }
 
 /// Rate limiter.
@@ -153,39 +156,44 @@ impl RedisDatasource {
 }
 
 #[cfg(feature = "redis-limiter")]
-#[async_trait::async_trait(?Send)]
 impl DataSource for RedisDatasource {
-    async fn track(&self, key: &str, expires: u64) -> Result<(usize, usize), Error> {
-        let mut connection = self
-            .client
+    fn track(
+        &self,
+        key: &str,
+        expires: u64,
+    ) -> impl Future<Output = Result<(usize, usize), Error>> + Send {
+        async move {
+            let mut connection = self
+                .client
             .get_multiplexed_tokio_connection()
-            .await
-            .map_err(|e| Error::Track(e.to_string()))?;
+                .await
+                .map_err(|e| Error::Track(e.to_string()))?;
 
-        // The seed of this approach is outlined Atul R in a blog post about rate limiting using
-        // NodeJS and Redis. For more details, see https://blog.atulr.com/rate-limiter
-        let mut pipe = redis::pipe();
-        pipe.atomic()
-            .cmd("SET") // Set key and value
-            .arg(&key)
-            .arg(0)
-            .arg("EX") // Set the specified expire time, in seconds.
-            .arg(expires)
-            .arg("NX") // Only set the key if it does not already exist.
-            .ignore() // --- ignore returned value of SET command ---
-            .cmd("INCR") // Increment key
-            .arg(&key)
-            .cmd("TTL") // Return time-to-live of key
-            .arg(&key);
+            // The seed of this approach is outlined Atul R in a blog post about rate limiting using
+            // NodeJS and Redis. For more details, see https://blog.atulr.com/rate-limiter
+            let mut pipe = redis::pipe();
+            pipe.atomic()
+                .cmd("SET") // Set key and value
+                .arg(&key)
+                .arg(0)
+                .arg("EX") // Set the specified expire time, in seconds.
+                .arg(expires)
+                .arg("NX") // Only set the key if it does not already exist.
+                .ignore() // --- ignore returned value of SET command ---
+                .cmd("INCR") // Increment key
+                .arg(&key)
+                .cmd("TTL") // Return time-to-live of key
+                .arg(&key);
 
-        let (count, ttl) = pipe
-            .query_async(&mut connection)
-            .await
-            .map_err(|e| Error::Track(e.to_string()))?;
-        let reset = Status::epoch_utc_plus(Duration::from_secs(ttl))
-            .map_err(|e| Error::Track(e.to_string()))?;
+            let (count, ttl) = pipe
+                .query_async(&mut connection)
+                .await
+                .map_err(|e| Error::Track(e.to_string()))?;
+            let reset = Status::epoch_utc_plus(Duration::from_secs(ttl))
+                .map_err(|e| Error::Track(e.to_string()))?;
 
-        Ok((count, reset))
+            Ok((count, reset))
+        }
     }
 }
 
