@@ -26,7 +26,7 @@ redis-limiter = ["redis"]
 actix-utils = "3"
 actix-web = { version = "4", default-features = false, features = ["cookies"] }
 
-chrono = "0.4"
+chrono = { version = "0.4", default-features = false, features = ["clock", "std"] }
 derive_more = { version = "1", features = ["display", "error", "from"] }
 log = "0.4"
 time = "0.3"
